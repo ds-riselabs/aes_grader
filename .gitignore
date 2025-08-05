@@ -1,0 +1,9 @@
+/aes_venv
+.env
+.docx
+*docx
+*.pkl
+.pkl
+*.json
+.json
+__pycache__/
