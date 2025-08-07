@@ -5,3 +5,10 @@ __pycache__/
 *.json*
 json.*
 
+*.pyc
+*.pyo
+*.pyd
+.aes_venv/
+env/
+venv/
+.git/

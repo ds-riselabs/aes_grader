@@ -2,29 +2,22 @@ import os
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import requests
-from huggingface_hub import hf_hub_download, InferenceClient
-import joblib
+from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
 import uvicorn
 
+# Load environment variables
 load_dotenv()
 
 app = FastAPI()
 
-# Load model
-REPO_ID = "risenetworks/aes_grader"
-FILENAME = "aes_grader.pkl"
-model = joblib.load(hf_hub_download(repo_id=REPO_ID, filename=FILENAME, token=os.getenv("HF_TOKEN")))
-
-# Initialize inference client once
+# Initialize Hugging Face InferenceClient
 client = InferenceClient(
     model="sentence-transformers/all-mpnet-base-v2",
     token=os.getenv("HF_TOKEN")
 )
 
-
-# Pydantic model
+# Pydantic model for incoming request
 class Exam_Data(BaseModel):
     question_id: str
     type: str
@@ -32,14 +25,14 @@ class Exam_Data(BaseModel):
     correct: str
     status: str
 
-# Get embedding from Inference API
+# Function to get normalized embedding from Inference API
 def get_sentence_embedding(text):
     try:
         embedding = client.feature_extraction(text, normalize=True)
         return np.array(embedding)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding extraction failed: {e}")
-    
+
 @app.get("/")
 def home():
     return "Hello World!"
@@ -51,27 +44,30 @@ def return_score(data: Exam_Data):
 
     if json_data["type"].lower() == "theory":
         try:
+            # Get embeddings
             correct_emb = get_sentence_embedding(json_data['correct'])  
-            answer_emb = get_sentence_embedding(json_data['answer'])    
+            answer_emb = get_sentence_embedding(json_data['answer'])   
 
-            # Take absolute difference and reshape for model input
-            input_vector = np.abs(correct_emb - answer_emb).reshape(1, 1, -1)
+            if correct_emb.shape != (768,) or answer_emb.shape != (768,):
+                raise HTTPException(status_code=500, detail="Invalid embedding shape")
 
-            # Make predictions
-            prediction = model.predict(input_vector)[0][0] 
+            # Compute cosine similarity
+            dot_product = np.dot(correct_emb, answer_emb)
+            norm_product = np.linalg.norm(correct_emb) * np.linalg.norm(answer_emb)
+            similarity = dot_product / norm_product if norm_product != 0 else 0.0
 
-            # Apply Sigmoid 
-            score = 1 / (1 + np.exp(-prediction))
+            # Clamp and round
+            similarity = max(0.0, min(similarity, 1.0))
+            json_data["score"] = round(float(similarity), 3)
 
-            # Set a threshold for the model
-            json_data["score"] = round(float(score), 3)
-            # json_data["passed"] = bool(score >= 0.5)
+            # Change the status from pending to marked
+            json_data["status"] = "MARKED"
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Scoring failed: {e}")
 
     return json_data
 
-# Run the fastapi
+# Run FastAPI app
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
