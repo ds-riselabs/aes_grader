@@ -98,7 +98,7 @@ def return_score(data: Exam_Data):
                 ]
             )
             ai_output = completion.choices[0].message.content.strip()
-            # applying the conditional formatting
+            # applying the conditional formatting for scoring
             if ai_output == "JUSTIFIED":
                 json_data["score"] = similarity_score
             else:
