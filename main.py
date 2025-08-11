@@ -5,10 +5,15 @@ from pydantic import BaseModel
 from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
 import uvicorn
+from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
 
+# Instantiate openai's client
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# instantiate app for fastapi
 app = FastAPI()
 
 # Initialize Hugging Face InferenceClient
@@ -60,12 +65,50 @@ def return_score(data: Exam_Data):
             similarity = max(0.0, min(similarity, 1.0))
             json_data["score"] = round(float(similarity), 3)
 
-            # Change the status from pending to marked
+            # Justify the similarity score of hf sentence transformer
+            student_resp, teacher_resp, similarity_score = json_data["answer"], json_data["correct"], json_data["score"]
+            completion = openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """
+                                    You are an academic subject matter expert.
+                                    Task:
+                                    1. Evaluate whether the provided similarity score is justified based on semantic and contextual alignment between the teacher's and student's responses.
+                                    2. If the similarity score is justified, return exactly: "JUSTIFIED"
+                                    3. If the similarity score is NOT justified, grade the student's response strictly between 0 and 1 using domain knowledge, where:
+                                        1.0 = fully correct and aligned in meaning,
+                                        0.0 = entirely incorrect or irrelevant.
+                                        Award partial credit only if the meaning is substantially correct.
+                                    4. Ensure consistent grading across all cases.
+                                    5. Output must be either:
+                                        - "JUSTIFIED" (if similarity score is acceptable), or
+                                        - a float value (if grading is needed).
+                                    """
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Grade the response 
+                                    similarity score: {similarity_score}
+                                    student's response: {student_resp},
+                                    teacher's resp: {teacher_resp}
+                                    """
+                    }
+                ]
+            )
+            ai_output = completion.choices[0].message.content.strip()
+            # applying the conditional formatting
+            if ai_output == "JUSTIFIED":
+                json_data["score"] = similarity_score
+            else:
+                json_data["score"] = float(ai_output)
+            
+            # change th status of the data:
             json_data["status"] = "MARKED"
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Scoring failed: {e}")
-
     return json_data
 
 # Run FastAPI app

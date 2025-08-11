@@ -6,4 +6,6 @@
 .pkl
 *.json
 .json
+.ipynb
+*.ipynb
 __pycache__/
